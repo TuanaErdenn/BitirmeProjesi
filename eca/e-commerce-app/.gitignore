@@ -1,0 +1,14 @@
+.idp-db.env
+.keycloak.env
+.product-db.env
+.order-db.env
+docker/.inventory-api.env
+docker/.order-api.env
+docker/.product-api.env
+docker/.ui.env
+vscode/
+.Ds_Store
+data/idp-db/*
+data/product-db/*
+data/order-db/*
+data/rabbitmq/*

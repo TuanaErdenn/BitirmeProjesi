@@ -1,0 +1,189 @@
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak
+    container_name: keycloak
+    ports:
+    - "8080:8080"
+    env_file:
+    - .keycloak.env
+    networks:
+    - eca-network
+    volumes:
+    - ../data/keycloak/realms:/opt/keycloak/data/import
+    depends_on:
+      idp-db:
+        condition: service_healthy
+    command:
+    - start-dev
+    - --import-realm
+
+  idp-db:
+    image: postgres:18
+    container_name: idp-db
+    volumes:
+    - ../data/idp-db/data:/var/lib/postgresql/18/docker
+    ports:
+    - "5430:5432"
+    env_file:
+    - .idp-db.env
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+    - eca-network
+
+  product-db:
+    image: postgres:18
+    container_name: product-db
+    volumes:
+    - ../data/product-db/data:/var/lib/postgresql/18/docker
+    ports:
+    - "5429:5432"
+    env_file:
+    - .product-db.env
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+    - eca-network
+
+  order-db:
+    image: postgres:18
+    container_name: order-db
+    volumes:
+    - ../data/order-db/data:/var/lib/postgresql/18/docker
+    ports:
+    - "5428:5432"
+    env_file:
+    - .order-db.env
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+    - eca-network
+
+  rabbitmq:
+    image: rabbitmq:4.2-management
+    container_name: rabbitmq
+    restart: always
+    ports:
+    - "5672:5672"
+    - "15672:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: admin
+      RABBITMQ_DEFAULT_PASS: admin123
+    volumes:
+    - ../data/rabbitmq:/var/lib/rabbitmq
+    networks:
+    - eca-network
+
+  # Product API
+  product-api:
+    build:
+      context: ../../eca-product-api
+      dockerfile: Dockerfile
+    container_name: product-api
+    ports:
+    - "5157:8080"
+    env_file:
+    - .product-api.env
+    networks:
+    - eca-network
+    depends_on:
+      product-db:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+
+  # Order API
+  order-api:
+    build:
+      context: ../../eca-order-api
+      dockerfile: Dockerfile
+    container_name: order-api
+    ports:
+    - "5002:8080"
+    env_file:
+    - .order-api.env
+    networks:
+    - eca-network
+    depends_on:
+      order-db:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+      rabbitmq:
+        condition: service_started
+
+  # Inventory API
+  inventory-api:
+    build:
+      context: ../../eca-inventory-api
+      dockerfile: Dockerfile
+    container_name: inventory-api
+    ports:
+    - "5003:8080"
+    env_file:
+    - .inventory-api.env
+    networks:
+    - eca-network
+    depends_on:
+      order-db:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+      rabbitmq:
+        condition: service_started
+
+  # UI
+  eca-ui:
+    build:
+      context: ../../eca-ui
+      dockerfile: Dockerfile
+    container_name: eca-ui
+    ports:
+    - "4000:4000"
+    environment:
+      KEYCLOAK_ISSUER: http://localhost:8080/realms/eca
+      KEYCLOAK_INTERNAL_ISSUER: http://keycloak:8080/realms/eca
+      PRODUCT_API_URL: http://product-api:8080
+      ORDER_API_URL: http://order-api:8080
+    networks:
+    - eca-network
+    depends_on:
+    - product-api
+    - order-api
+
+  # Kong API Gateway
+  kong:
+    image: kong:latest
+    container_name: kong
+    user: "0"
+    environment:
+      KONG_DATABASE: "off" # DB-less mod
+      KONG_DECLARATIVE_CONFIG: /usr/local/kong/declarative/kong.yml
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001, 0.0.0.0:8444 ssl
+    volumes:
+    - ../data/kong:/usr/local/kong/declarative
+    ports:
+    - "8000:8000" # HTTP Proxy
+    - "8443:8443" # HTTPS Proxy
+    - "8001:8001" # Admin API (Local kullanım için)
+    networks:
+    - eca-network
+    depends_on:
+    - keycloak
+
+networks:
+  eca-network:
+    driver: bridge
